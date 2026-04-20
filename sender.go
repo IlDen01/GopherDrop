@@ -56,12 +56,12 @@ func readFirstChunk(path string) ([]byte, error) {
 		return nil, err
 	}
 	defer file.Close()
-	buffer := make([]byte, 16)
-	size, err := file.Read(buffer)
+	buf := make([]byte, 16)
+	size, err := file.Read(buf)
 	if err != nil && err != io.EOF {
 		return nil, err
 	}
-	return buffer[:size], nil
+	return buf[:size], nil
 }
 
 func readFullChunk(path string) ([]byte, error) {
@@ -70,10 +70,10 @@ func readFullChunk(path string) ([]byte, error) {
 		return nil, err
 	}
 	defer file.Close()
-	buffer := make([]byte, 16)
-	size, err := io.ReadFull(file, buffer)
+	buf := make([]byte, 16)
+	size, err := io.ReadFull(file, buf)
 	if err != nil {
-		return buffer[:size], err
+		return buf[:size], err
 	}
-	return buffer[:size], nil
+	return buf[:size], nil
 }
