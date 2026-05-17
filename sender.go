@@ -1,36 +1,123 @@
 package main
 
 import (
+	"GopherDrop/protocol"
+	"GopherDrop/utils"
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
+	"net"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 )
 
 func startSender() {
-	fmt.Println("Starting sender...")
 	path, err := getPath()
 	if err != nil {
 		fmt.Println("Error:", err)
 		return
 	}
-	content, err := readFirstChunk(path)
+
+	myIP, err := utils.GetOutboundIP()
 	if err != nil {
 		fmt.Println("Error:", err)
 		return
 	}
-	fmt.Println("Size:", len(content), "| Content:", content)
-	content, err = readFullChunk(path)
-	if err != nil {
-		fmt.Print("Error: ", err, " | ")
+
+	addr := &net.UDPAddr{
+		IP:   net.IPv4(255, 255, 255, 255),
+		Port: 10609,
 	}
-	fmt.Println("Size:", len(content), "| Content:", content)
+
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+	defer conn.Close()
+
+	msg := protocol.Message{
+		Type: "announce",
+		Name: deviceName,
+		IP:   myIP,
+		Port: 0,
+	}
+
+	data, err := json.Marshal(msg)
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+
+	_, err = conn.WriteToUDP(data, addr)
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+	fmt.Println("Looking for receivers...")
+
+	var receivers []protocol.Message
+	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+
+	buf := make([]byte, 1024)
+	for {
+		n, _, err := conn.ReadFromUDP(buf)
+		if err != nil {
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Timeout() {
+				break
+			}
+			fmt.Println("Read error:", err)
+			break
+		}
+
+		var resp protocol.Message
+		err = json.Unmarshal(buf[:n], &resp)
+		if err == nil {
+			if resp.Type == "response" {
+				receivers = append(receivers, resp)
+			}
+		}
+	}
+
+	if len(receivers) == 0 {
+		fmt.Println("No receivers found.")
+		return
+	}
+
+	fmt.Println("\nFound devices:")
+	for i, r := range receivers {
+		fmt.Printf("%d) %s (%s:%d)\n", i+1, r.Name, r.IP, r.Port)
+	}
+
+	fmt.Print("Select device number: ")
+	var choice int
+	_, err = fmt.Scanln(&choice)
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+
+	if choice < 1 || choice > len(receivers) {
+		fmt.Println("Invalid selection")
+		return
+	}
+
+	selected := receivers[choice-1]
+	targetAddr := selected.IP + ":" + strconv.Itoa(selected.Port)
+
+	err = utils.SendFile(targetAddr, path)
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
 }
 
 func getPath() (string, error) {
-	fmt.Println("Enter path:")
+	fmt.Print("Enter path to file: ")
 	reader := bufio.NewReader(os.Stdin)
 	path, err := reader.ReadString('\n')
 	if err != nil {
@@ -48,32 +135,4 @@ func getPath() (string, error) {
 		return "", errors.New("path is a directory")
 	}
 	return path, nil
-}
-
-func readFirstChunk(path string) ([]byte, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	buf := make([]byte, 16)
-	size, err := file.Read(buf)
-	if err != nil && err != io.EOF {
-		return nil, err
-	}
-	return buf[:size], nil
-}
-
-func readFullChunk(path string) ([]byte, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	buf := make([]byte, 16)
-	size, err := io.ReadFull(file, buf)
-	if err != nil {
-		return buf[:size], err
-	}
-	return buf[:size], nil
 }
